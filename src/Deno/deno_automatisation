@@ -1,0 +1,72 @@
+// fetch_all_data.ts
+
+// =========================
+// CONFIGURATION
+// =========================
+const BASE_URL = "http://172.22.215.130:8080/archived";
+const DATASETS = ["sequences","cancer","biomedical","social"];
+const COUNTRIES = ["PT","CH","DE","GB","CZ","FR","DK","LV","RU","HR","SI","GR","IT","RO","LT","SE","ES","BE","NO","FI","PL","NL","BY","LU","UA","AL","IE","AT","EE","RS","HU","ME","BG","SK","MD","IS"];
+const START_YEAR = 1980;
+const END_YEAR = 2025;
+const DELAY_MS = 500; // délai entre requêtes
+
+// =========================
+// UTILITAIRES
+// =========================
+const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+
+function generateTrimesters(start: number, end: number): string[] {
+  const trimesters: string[] = [];
+  for (let y = start; y <= end; y++) {
+    for (let q = 1; q <= 4; q++) {
+      trimesters.push(`${y}Q${q}`);
+    }
+  }
+  return trimesters;
+}
+
+const TRIMESTERS = generateTrimesters(START_YEAR, END_YEAR);
+
+// =========================
+// SCRIPT PRINCIPAL
+// =========================
+for (const dataset of DATASETS) {
+  for (const country of COUNTRIES) {
+    const folderPath = `data/${dataset}/${country}`;
+    await Deno.mkdir(folderPath, { recursive: true });
+
+    for (const trimester of TRIMESTERS) {
+      const filePath = `${folderPath}/${trimester}.txt`;
+
+      // Ne pas retélécharger si déjà existant
+      try {
+        await Deno.stat(filePath);
+        console.log(`Existe déjà : ${filePath}`);
+        continue;
+      } catch (_) {
+        // le fichier n'existe pas → ok pour télécharger
+      }
+
+      const url = `${BASE_URL}/${dataset}/${country}/${trimester}`;
+      try {
+        const res = await fetch(url);
+
+        if (res.status === 404) {
+          console.log(`Pas de données pour : ${dataset}/${country}/${trimester}`);
+        } else if (!res.ok) {
+          console.error(`Erreur HTTP ${res.status} sur ${url}`);
+        } else {
+          const text = await res.text();
+          await Deno.writeTextFile(filePath, text);
+          console.log(`Sauvegardé : ${dataset}/${country}/${trimester}`);
+        }
+      } catch (e) {
+        console.error(`Erreur sur ${url}`, e);
+      }
+
+      await sleep(DELAY_MS); // pause pour ne pas saturer le serveur
+    }
+  }
+}
+
+console.log("Téléchargement terminé !");
