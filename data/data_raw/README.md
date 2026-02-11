@@ -4,3 +4,5 @@ Maintenant, voici les étapes qui ont été nécessaires pour importer toutes le
 Les données nous ont été fournies sur Moodle. Il s'agit de 6 fichiers, au format .fasta, que nous allons devoir importer sur R.
 Le package utilisé sera seqinr, avec une fonction "read.alignement()". On aura également besoin de l'option "split" de la fonction "strsplit", pour séparer les données selon un caractère.
 Le fichier correspondant sera placé dans le dossier R de "src".
+
+Les fichiers .fasta qui nous ont été transmis ont permis de faire les premières analyses en attendant que les données sur le serveur http://172.22.215.130.8080 soient publiées.
