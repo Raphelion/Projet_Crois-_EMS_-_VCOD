@@ -1,0 +1,259 @@
+---
+title: "Première_visu"
+author: "Dorian Verney"
+date: "2026-02-11"
+output: html_document
+---
+# Importation des fichiers
+```{r}
+library(seqinr)
+data_BE <- read.fasta("hiv_db_BE_0.fasta")
+data_FR <- read.fasta("hiv_db_FR_0.fasta")
+data_GB <- read.fasta("hiv_db_GB_0.fasta")
+data_RW <- read.fasta("hiv_db_RW_0.fasta")
+data_UG <- read.fasta("hiv_db_UG_0.fasta")
+data_US <- read.fasta("hiv_db_US_0.fasta")
+data_US <- read.fasta("hiv_db_US_0.fasta")
+```
+
+```{r}
+# ==============================================================================
+# ANALYSE DE SÉQUENCES VIH - IMPORTATION ET PRÉ-TRAITEMENT
+# ==============================================================================
+
+# 1. Chargement des packages
+if (!require("seqinr")) install.packages("seqinr")
+library(seqinr)
+
+# 2. Liste des fichiers à traiter
+fichiers <- c("hiv_db_US_0.fasta", "hiv_db_UG_0.fasta", "hiv_db_RW_0.fasta", 
+              "hiv_db_GB_0.fasta", "hiv_db_FR_0.fasta", "hiv_db_BE_0.fasta")
+
+# 3. Fonction principale pour importer et structurer les données
+traiter_fichier_fasta <- function(nom_fichier) {
+  
+  # A. Importation de l'alignement
+  # On utilise read.alignment pour conserver les gaps "-"
+  ali <- read.alignment(file = nom_fichier, format = "fasta")
+  
+  # B. Extraction des métadonnées à partir des IDs
+  # Format attendu : Accession.Jour.Mois.Annee.Pays
+  ids <- ali$nam
+  metadata <- do.call(rbind, strsplit(ids, split = "\\."))
+  colnames(metadata) <- c("Accession", "Jour", "Mois", "Annee", "Pays")
+  metadata <- as.data.frame(metadata, stringsAsFactors = FALSE)
+  
+  # C. "Casser" les séquences (Instruction de Thomas : strsplit)
+  # On transforme chaque chaîne en vecteur de caractères individuels
+  seq_eclatees <- lapply(ali$seq, function(s) {
+    strsplit(tolower(s), split = "")[[1]]
+  })
+  
+  return(list(metadata = metadata, sequences = seq_eclatees))
+}
+
+# 4. Application du traitement à tous les pays
+resultats_liste <- lapply(fichiers, traiter_fichier_fasta)
+
+# 5. Fusion de toutes les métadonnées en un seul tableau
+toutes_infos <- do.call(rbind, lapply(resultats_liste, function(x) x$metadata))
+
+# 6. Création d'une matrice de séquences unique
+# Note : On doit harmoniser les longueurs car les séquences n'ont pas le même nombre de colonnes
+toutes_seq_liste <- do.call(c, lapply(resultats_liste, function(x) x$sequences))
+max_longueur <- max(sapply(toutes_seq_liste, length))
+
+# On complète les séquences courtes avec des "-" pour permettre la mise en matrice
+sequences_homogenes <- lapply(toutes_seq_liste, function(s) {
+  c(s, rep("-", max_longueur - length(s)))
+})
+
+# Transformation finale en matrice (Une ligne par virus, une colonne par position)
+matrice_nucleotides <- do.call(rbind, sequences_homogenes)
+rownames(matrice_nucleotides) <- toutes_infos$Accession
+
+# ==============================================================================
+# VÉRIFICATION DES DONNÉES
+# ==============================================================================
+
+# Afficher les premières lignes des métadonnées
+print(head(toutes_infos))
+
+# Statistiques sur les années de collecte
+print(table(toutes_infos$Annee))
+
+# Vérification de la matrice (5 premières lignes, 10 premières colonnes)
+print(matrice_nucleotides[1:5, 1:10])
+
+# Calcul du taux de remplissage moyen (bases vs gaps)
+taux_bases <- mean(matrice_nucleotides != "-") * 100
+cat("Le taux de remplissage moyen des séquences est de :", round(taux_bases, 2), "%\n")
+```
+
+```{r}
+# Calculer le nombre de bases réelles (non "-") par colonne
+bases_par_colonne <- colSums(matrice_nucleotides != "-")
+
+# On ne garde que les colonnes où au moins 20% des virus ont une donnée
+# Cela permet de se concentrer sur les zones bien documentées du génome
+indices_interessants <- which(bases_par_colonne > (nrow(matrice_nucleotides) * 0.2))
+matrice_filtree <- matrice_nucleotides[, indices_interessants]
+
+cat("Après filtrage, il reste", ncol(matrice_filtree), "positions informatives.\n")
+```
+
+```{r}
+# Fonction pour calculer l'entropie (diversité) à une position donnée
+calculer_diversite <- function(colonne) {
+  bases <- colonne[colonne %in% c("a", "c", "g", "t")]
+  if(length(bases) == 0) return(0)
+  tab <- table(bases) / length(bases)
+  return(-sum(tab * log(tab))) # Formule de l'entropie de Shannon
+}
+
+# Calculer la diversité pour chaque position
+diversite_positions <- apply(matrice_filtree, 2, calculer_diversite)
+
+# Tracer le graphique de variabilité le long du génome
+plot(diversite_positions, type="l", col="firebrick", 
+     main="Variabilité génétique du VIH (1978-1987)",
+     xlab="Position dans le génome", ylab="Indice de mutation")
+```
+
+```{r}
+# Exemple : Fréquence du nucléotide 'a' par pays
+freq_A_par_pays <- tapply(1:nrow(matrice_nucleotides), toutes_infos$Pays, function(indices) {
+  mean(matrice_nucleotides[indices, ] == "a")
+})
+
+print("Fréquence moyenne de la base 'A' par pays :")
+print(freq_A_par_pays)
+
+# Faire un barplot pour comparer
+barplot(freq_A_par_pays, col="olivedrab", main="Proportion de Adénine par Pays")
+```
+
+```{r}
+# Fonction pour calculer l'entropie sur une colonne
+shannon_entropy <- function(colonne) {
+  bases <- colonne[colonne %in% c("a", "c", "g", "t")]
+  if(length(bases) < 10) return(0) # Pas assez de données
+  p <- table(bases) / length(bases)
+  -sum(p * log(p))
+}
+
+# Appliquer le calcul sur toute la matrice filtrée
+entropie_vecteur <- apply(matrice_filtree, 2, shannon_entropy)
+
+# Tracer le graphique
+plot(entropie_vecteur, type="l", col="blue", 
+     main="Variabilité génétique le long du génome (HIV)",
+     xlab="Positions informatives", ylab="Niveau de mutation (Entropie)")
+```
+
+```{r}
+# Trouver les positions les plus stables (Entropie < 0.05 par exemple)
+positions_stables <- which(entropie_vecteur < 0.05 & entropie_vecteur > 0)
+cat("Il y a", length(positions_stables), "positions ultra-stables identifiées.\n")
+```
+
+```{r}
+# Calculer la diversité moyenne par pays
+diversite_par_pays <- sapply(unique(toutes_infos$Pays), function(p) {
+  indices <- which(toutes_infos$Pays == p)
+  sub_matrice <- matrice_filtree[indices, ]
+  mean(apply(sub_matrice, 2, shannon_entropy), na.rm = TRUE)
+})
+
+barplot(sort(diversite_par_pays, decreasing = TRUE), 
+        col = "orange", main = "Diversité génétique moyenne par pays",
+        ylab = "Entropie moyenne")
+```
+
+```{r}
+# Récupérer les numéros de colonnes de ces 2 positions
+indices_stables <- which(entropie_vecteur < 0.05 & entropie_vecteur > 0)
+
+# Afficher les positions réelles dans le génome filtré
+print(indices_stables)
+
+# Regarder quels nucléotides sont présents à ces endroits
+# (On s'attend à voir presque 100% de la même lettre)
+apply(matrice_filtree[, indices_stables], 2, table)
+```
+
+```{r}
+# Calculer la diversité moyenne par année
+diversite_par_annee <- sapply(sort(unique(toutes_infos$Annee)), function(an) {
+  indices <- which(toutes_infos$Annee == an)
+  # On calcule l'entropie moyenne sur toutes les positions pour cette année
+  sub_matrice <- matrice_filtree[indices, , drop=FALSE]
+  entropies <- apply(sub_matrice, 2, shannon_entropy)
+  mean(entropies, na.rm = TRUE)
+})
+
+# Tracer l'évolution de la diversité
+plot(names(diversite_par_annee), diversite_par_annee, type="b", 
+     pch=19, col="darkblue",
+     main="Évolution de la diversité génétique (1978-1987)",
+     xlab="Année", ylab="Entropie moyenne")
+```
+
+```{r}
+# 1. Définir la séquence consensus (la base la plus fréquente à chaque position)
+consensus <- apply(matrice_filtree, 2, function(x) {
+  tab <- table(x[x != "-"])
+  if(length(tab) == 0) return("-")
+  names(tab)[which.max(tab)]
+})
+
+# 2. Calculer la distance de chaque patient par rapport au consensus
+distances <- apply(matrice_filtree, 1, function(seq_patient) {
+  sum(seq_patient != consensus & seq_patient != "-" & consensus != "-")
+})
+
+# 3. Ajouter cette info à tes métadonnées
+toutes_infos$Distance_Consensus <- distances
+
+head(toutes_infos)
+```
+
+```{r}
+# Transformer l'année en numérique pour le calcul
+toutes_infos$Annee_num <- as.numeric(toutes_infos$Annee)
+
+# Calculer la corrélation entre l'année et la distance au consensus
+cor_test <- cor.test(toutes_infos$Annee_num, toutes_infos$Distance_Consensus)
+print(paste("Coefficient de corrélation :", round(cor_test$estimate, 2)))
+
+# Tracer la régression
+library(ggplot2)
+ggplot(toutes_infos, aes(x=Annee_num, y=Distance_Consensus)) +
+  geom_jitter(aes(color=Pays), width=0.2, alpha=0.6) +
+  geom_smooth(method="lm", color="black") +
+  theme_minimal() +
+  labs(title="Accumulation des mutations dans le temps (1978-1987)",
+       x="Année", y="Nombre de mutations (Distance au consensus)")
+```
+
+```{r}
+# Boxplot pour comparer la divergence par pays
+ggplot(toutes_infos, aes(x=reorder(Pays, Distance_Consensus, FUN=median), y=Distance_Consensus, fill=Pays)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title="Divergence génétique par Pays",
+       x="Pays", y="Distance au consensus")
+```
+
+```{r}
+# Créer le tableau final de résultats
+rapport_final <- toutes_infos[, c("Accession", "Annee", "Pays", "Distance_Consensus")]
+
+# Ajouter une colonne pour dire si le virus est "Stable" ou "Très Muté" (Top 10%)
+seuil_mutation <- quantile(rapport_final$Distance_Consensus, 0.90)
+rapport_final$Statut_Evolution <- ifelse(rapport_final$Distance_Consensus > seuil_mutation, "Hautement Divergent", "Standard")
+
+# Sauvegarder pour le branchement futur
+write.csv(rapport_final, "analyse_viro_etape1.csv", row.names = FALSE)
+```
+
